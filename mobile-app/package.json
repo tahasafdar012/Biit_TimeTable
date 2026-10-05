@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "@react-native-vector-icons/ionicons": "^13.1.4",
+    "@react-navigation/stack": "^7.12.0"
+  }
+}

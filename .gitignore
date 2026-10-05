@@ -1,0 +1,22 @@
+# Dependencies - reinstall with yarn install
+node_modules/
+
+# Secrets - create .env by hand on each machine (see server/.env.example)
+.env
+.env.*
+!.env.example
+
+# Uploaded timetable - lives on the server, re-uploading the PDF recreates it.
+# Ignored so a git pull on EC2 never overwrites the live timetable.
+server/data/
+
+# Build output
+dist/
+admin-panel/dist/
+
+# Logs / OS / editor
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
