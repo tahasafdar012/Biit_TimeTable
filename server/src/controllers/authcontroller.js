@@ -1,19 +1,17 @@
-const fs = require("fs");
-const path = require("path");
-const DATA_DIR = require("../dataDir");
+const store = require("../store");
 
-// A password changed from the admin panel is saved next to the timetable, so it survives
-// restarts (on Render only the data disk is kept). It takes priority over ADMIN_PASSWORD
-// from .env / the Render dashboard. Forgot it? Delete this file and restart.
-const PASSWORD_FILE = path.join(DATA_DIR, "admin.json");
+// A password changed from the admin panel is saved with the timetable ("admin" in the
+// store), so it survives restarts. It takes priority over ADMIN_PASSWORD from .env /
+// the Render dashboard. Forgot it? Delete data/admin.json (or the "admin" document
+// in MongoDB) and restart.
 
 // called once at startup (server.js)
-exports.loadSavedPassword = () => {
+exports.loadSavedPassword = async () => {
   try {
-    const { password } = JSON.parse(fs.readFileSync(PASSWORD_FILE, "utf-8"));
-    if (password) process.env.ADMIN_PASSWORD = password;
+    const saved = await store.read("admin");
+    if (saved?.password) process.env.ADMIN_PASSWORD = saved.password;
   } catch (err) {
-    if (err.code !== "ENOENT") console.error("Could not read saved admin password:", err.message);
+    console.error("Could not read saved admin password:", err.message);
   }
 };
 
@@ -31,8 +29,7 @@ exports.changePassword = async (req, res) => {
   }
 
   try {
-    await fs.promises.mkdir(DATA_DIR, { recursive: true });
-    await fs.promises.writeFile(PASSWORD_FILE, JSON.stringify({ password: newPassword }));
+    await store.write("admin", { password: newPassword });
     process.env.ADMIN_PASSWORD = newPassword; // takes effect now, no restart needed
     res.json({ ok: true });
   } catch (err) {
