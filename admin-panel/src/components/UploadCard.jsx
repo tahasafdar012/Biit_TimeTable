@@ -42,7 +42,8 @@ export default function UploadCard({ password, onUnauthorized }) {
     <section className="rounded-md border border-slate-200 bg-white p-6">
       <h2 className="text-base font-semibold">Upload timetable</h2>
       <p className="mt-1 text-sm text-slate-600">
-        Choose the timetable PDF (max 20 MB). It will replace the current timetable.
+        Choose the timetable PDF (max 20 MB). It will replace the current timetable. Put the version in the
+        file name, e.g. <span className="font-medium">Timetable V#5.pdf</span>, and the app will show it.
       </p>
 
       {/* file row: click "Choose PDF" or drop a file on it */}
@@ -103,7 +104,8 @@ export default function UploadCard({ password, onUnauthorized }) {
 
       {summary && (
         <p className="mt-4 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
-          Timetable updated: {summary.sections} sections, {summary.entries} classes
+          Timetable updated{summary.version && ` (${summary.version})`}: {summary.sections} sections,{" "}
+          {summary.entries} classes
           {summary.warnings.length > 0 && `, ${summary.warnings.length} warnings`}.
         </p>
       )}

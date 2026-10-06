@@ -1,37 +1,36 @@
 import axios from 'axios';
 
-import { saveCachedWeek, getCachedWeek } from '../storage/timetableCache';
+import { API_BASE_URL, REQUEST_TIMEOUT_MS } from '../config';
 
-const api = axios.create({
-    baseURL: "http://192.168.1.13:5000/api/timetable",
-    timeout:10000,
-});
+// Network calls only. Saving for offline use lives in timetable/TimetableContext.jsx.
+const api = axios.create({ baseURL: API_BASE_URL, timeout: REQUEST_TIMEOUT_MS });
 
-// Download a section's week from the server and save it for offline use.
-// Throws if there is no internet — used when picking a section, which needs the network.
-export async function downloadWeek(section) {
-  const { data } = await api.get("", { params: { section, view: "week" } });
-  await saveCachedWeek(section, data);
-  return data;
+// One section's week: { updatedAt, version, fileName, section, days: { Monday: [slots], ... }, etag }.
+// Pass the etag of the copy you already have: if the timetable hasn't changed, the server
+// answers "304 Not Modified" with no body and this returns null — a tiny, cheap request.
+export async function fetchWeek(section, etag) {
+  const res = await api.get('', {
+    params: { section, view: 'week' },
+    headers: etag ? { 'If-None-Match': etag } : undefined,
+    validateStatus: status => (status >= 200 && status < 300) || status === 304,
+  });
+  if (res.status === 304) return null;
+  return { ...res.data, etag: res.headers.etag ?? null };
 }
 
-// Today and Schedule screens: fresh data when online, the saved copy when offline.
-export async function getWeek(section) {
-  try {
-    const data = await downloadWeek(section);
-    return { ...data, fromCache: false };
-  } catch (err) {
-    // A 4xx answer (e.g. the section was removed in a new upload) means the saved copy
-    // is out of date, so show the error instead of hiding the change. No answer at all
-    // (offline, server down) or a 5xx falls back to the saved copy.
-    if (err.response && err.response.status < 500) throw err;
-    const cached = await getCachedWeek(section);
-    if (cached) return { ...cached, fromCache: true };
-    throw err;  // no network AND no cache — nothing we can show
-  }
+// All section names in the current timetable
+export async function fetchSections() {
+  const { data } = await api.get('/sections');
+  return data.sections ?? [];
 }
 
-export async function getSections() {
-  const { data } = await api.get("/sections");
-  return data.sections;
-}
+// The server answered, but with an error (e.g. the section no longer exists).
+// Anything else (no internet, timeout, server down) means we just couldn't reach it.
+export const isServerRejection = err => !!err?.response && err.response.status < 500;
+
+// A message the user can act on
+export const errorMessage = err =>
+  err?.response?.data?.error ||
+  (err?.response
+    ? `Server error (${err.response.status}). Please try again later.`
+    : "Can't reach the server. Check your internet connection.");

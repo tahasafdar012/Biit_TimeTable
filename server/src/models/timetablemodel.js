@@ -1,7 +1,8 @@
 const fs = require("fs/promises");
 const path = require("path");
+const DATA_DIR = require("../dataDir");
 
-const FILE = path.join(__dirname, "../../data/timetable.json");
+const FILE = path.join(DATA_DIR, "timetable.json");
 
 // The file only changes through save(), so keep the parsed copy in memory
 // instead of re-reading and re-parsing it on every request.

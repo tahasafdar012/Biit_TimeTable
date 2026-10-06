@@ -1,4 +1,4 @@
-import { StatusBar, View } from 'react-native'
+import { StatusBar, View, StyleSheet } from 'react-native'
 import React, { useEffect, useMemo, useState } from 'react'
 import { NavigationContainer, DefaultTheme, DarkTheme } from '@react-navigation/native'
 import { createNativeStackNavigator } from '@react-navigation/native-stack'
@@ -14,9 +14,13 @@ import WeeksScreen from './src/WeeksScreen'
 import { getSavedSection } from './src/storage/sectionStorage';
 import SelectSectionScreen from './src/SelectSectionScreen';
 import { ThemeProvider, useTheme } from './src/theme/ThemeContext';
+import { TimetableProvider } from './src/timetable/TimetableContext';
+import TabBarButton from './src/components/TabBarButton';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
+
+const TAB_BAR_HEIGHT = 66;
 
 const TAB_ICONS = {
   Home: 'home',
@@ -24,34 +28,45 @@ const TAB_ICONS = {
   Settings: 'settings',
 };
 
+// The tabs share one offline-first timetable for the selected section
 const BottomTabs = ({ route }) => {
   const { section } = route.params ?? {};
   const { colors } = useTheme();
+  const { bottom } = useSafeAreaInsets(); // room for the phone's gesture / button bar
   return (
+    <TimetableProvider section={section}>
     <Tab.Navigator
       screenOptions={({ route }) => ({
-        tabBarIcon: ({ focused, color, size }) => (
-          <Ionicons
-            name={focused ? TAB_ICONS[route.name] : `${TAB_ICONS[route.name]}-outline`}
-            size={size}
-            color={color}
-          />
+        // Active tab: filled icon on a soft green pill. Others: outline icon.
+        tabBarIcon: ({ focused, color }) => (
+          <View style={[styles.tabIcon, focused && { backgroundColor: colors.primarySoft }]}>
+            <Ionicons
+              name={focused ? TAB_ICONS[route.name] : `${TAB_ICONS[route.name]}-outline`}
+              size={22}
+              color={color}
+            />
+          </View>
         ),
+        tabBarButton: props => <TabBarButton {...props} />,
         headerStyle: { backgroundColor: colors.header },
         headerTintColor: colors.headerText,
         headerTitleStyle: { fontWeight: '800' },
         headerShadowVisible: false,
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.tabInactive,
-        tabBarStyle: { backgroundColor: colors.tabBar, borderTopColor: colors.border },
-        tabBarLabelStyle: { fontWeight: '700' },
+        tabBarStyle: [
+          styles.tabBar,
+          { height: TAB_BAR_HEIGHT + bottom, backgroundColor: colors.tabBar, borderTopColor: colors.border },
+        ],
+        tabBarLabelStyle: styles.tabLabel,
         sceneStyle: { backgroundColor: colors.background },
       })}
     >
-      <Tab.Screen name="Home" component={HomeScreen} initialParams={{ section }} options={{ title: 'Today' }} />
-      <Tab.Screen name="Schedule" component={WeeksScreen} initialParams={{ section }} options={{ title: 'Weekly Schedule', tabBarLabel: 'Schedule' }} />
-      <Tab.Screen name="Settings" component={SettingScreen} initialParams={{ section }} />
+      <Tab.Screen name="Home" component={HomeScreen} options={{ title: 'Today' }} />
+      <Tab.Screen name="Schedule" component={WeeksScreen} options={{ title: 'Weekly Schedule', tabBarLabel: 'Schedule' }} />
+      <Tab.Screen name="Settings" component={SettingScreen} />
     </Tab.Navigator>
+    </TimetableProvider>
   );
 };
 
@@ -123,3 +138,24 @@ const App = () => (
 )
 
 export default App
+
+const styles = StyleSheet.create({
+  tabBar: {
+    paddingTop: 6,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    // soft shadow above the bar instead of a hard line
+    elevation: 12,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: -2 },
+  },
+  tabIcon: {
+    width: 56,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabLabel: { fontSize: 12, fontWeight: '700', marginTop: 2 },
+});

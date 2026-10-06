@@ -1,56 +1,40 @@
 import { StyleSheet, Text, View, ActivityIndicator, FlatList, RefreshControl } from 'react-native';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Ionicons from '@react-native-vector-icons/ionicons';
 
-import { getWeek } from './services/api';
 import { useTheme } from './theme/ThemeContext';
+import { useTimetable } from './timetable/TimetableContext';
 import ClassCard from './components/ClassCard';
 import StateMessage from './components/StateMessage';
-import useAutoRefresh, { formatUpdatedAt } from './hooks/useAutoRefresh';
+import { toMinutes, nowMinutes, todayName, todayLabel, formatUpdatedAt } from './utils/time';
 
-const todayLabel = () =>
-  new Date().toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long' });
-const todayName = () => new Date().toLocaleDateString('en-US', { weekday: 'long' });
-
-const HomeScreen = ({ route }) => {
-  const { section } = route.params ?? {};
-  const { colors } = useTheme();
-  const [entries, setEntries] = useState([]);
-  const [updatedAt, setUpdatedAt] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState(null);
-
-  const load = useCallback(async () => {
-    if (!section) {
-      setError('No section selected');
-      return;
-    }
-    try {
-      // Same week data as the Schedule tab (saved for offline); pick out today's classes.
-      // Evening "No Class" padding (status "off") isn't a class, so it's left out.
-      const data = await getWeek(section);
-      setEntries((data?.days?.[todayName()] ?? []).filter(item => item.status !== 'off'));
-      setUpdatedAt(data?.updatedAt ?? null);
-      setError(null);
-    } catch (err) {
-      // A server error means the old data is no longer valid (e.g. section removed)
-      if (err.response) setEntries([]);
-      setError(err.response?.data?.error || err.message);
-    }
-  }, [section]);
-
+// Ticks every 30 s so the highlight moves to the next class without a reload
+function useNowMinutes() {
+  const [now, setNow] = useState(nowMinutes);
   useEffect(() => {
-    load().finally(() => setLoading(false));
-  }, [load]);
+    const timer = setInterval(() => setNow(nowMinutes()), 30 * 1000);
+    return () => clearInterval(timer);
+  }, []);
+  return now;
+}
 
-  useAutoRefresh(load);
+const HomeScreen = () => {
+  const { colors } = useTheme();
+  const { section, week, loading, refreshing, error, refresh, retry } = useTimetable();
+  const now = useNowMinutes();
+  const today = todayName();
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  };
+  // Today's slots: classes and free slots. Evening "No Class" padding (status "off") is hidden.
+  const entries = useMemo(
+    () => (week?.days?.[today] ?? []).filter(item => item.status !== 'off'),
+    [week, today],
+  );
+  const classes = entries.filter(item => item.status === 'class');
+
+  // Green border on one card: the class on right now, or else the next class today
+  const highlighted =
+    classes.find(item => now >= toMinutes(item.start) && now < toMinutes(item.end)) ??
+    classes.find(item => toMinutes(item.start) > now);
 
   if (loading) {
     return (
@@ -60,19 +44,16 @@ const HomeScreen = ({ route }) => {
     );
   }
 
-  if (error && entries.length === 0) {
+  if (!week) {
     return (
-      <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <View style={[styles.fill, { backgroundColor: colors.background }]}>
         <StateMessage
           tone="error"
           icon="cloud-offline-outline"
           title="Couldn't load today's classes"
           message={error}
           actionLabel="Try again"
-          onAction={() => {
-            setLoading(true);
-            load().finally(() => setLoading(false));
-          }}
+          onAction={retry}
         />
       </View>
     );
@@ -80,19 +61,21 @@ const HomeScreen = ({ route }) => {
 
   const header = (
     <View style={[styles.banner, { backgroundColor: colors.buttonBg }]}>
-      <Text style={styles.bannerDate}>{todayLabel()}</Text>
-      <Text style={styles.bannerTitle}>
-        {entries.length === 0
-          ? 'No classes today'
-          : `${entries.length} ${entries.length === 1 ? 'class' : 'classes'} today`}
-      </Text>
-      <View style={styles.chip}>
-        <Ionicons name="school-outline" size={14} color="#FFFFFF" />
-        <Text style={styles.chipText}>{section}</Text>
+      <View style={styles.bannerRow}>
+        <Text style={styles.bannerTitle}>
+          {classes.length === 0
+            ? 'No classes today'
+            : `${classes.length} ${classes.length === 1 ? 'class' : 'classes'} today`}
+        </Text>
+        <View style={styles.chip}>
+          <Ionicons name="school-outline" size={12} color="#FFFFFF" />
+          <Text style={styles.chipText} numberOfLines={1}>{section}</Text>
+        </View>
       </View>
-      {!!formatUpdatedAt(updatedAt) && (
-        <Text style={styles.updated}>Timetable updated {formatUpdatedAt(updatedAt)}</Text>
-      )}
+      <Text style={styles.bannerSub} numberOfLines={1}>
+        {todayLabel()}
+        {formatUpdatedAt(week.updatedAt) ? ` · Updated ${formatUpdatedAt(week.updatedAt)}` : ''}
+      </Text>
     </View>
   );
 
@@ -101,9 +84,10 @@ const HomeScreen = ({ route }) => {
       style={{ backgroundColor: colors.background }}
       contentContainerStyle={styles.list}
       data={entries}
-      keyExtractor={(item, i) => `${item.day}-${item.start}-${i}`}
+      keyExtractor={(item, i) => `${item.start}-${i}`}
       ListHeaderComponent={header}
-      renderItem={({ item }) => <ClassCard item={item} />}
+      extraData={highlighted}
+      renderItem={({ item }) => <ClassCard item={item} current={item === highlighted} />}
       ListEmptyComponent={
         <StateMessage
           icon="cafe-outline"
@@ -114,7 +98,7 @@ const HomeScreen = ({ route }) => {
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
-          onRefresh={onRefresh}
+          onRefresh={refresh}
           colors={[colors.primary]}
           tintColor={colors.primary}
           progressBackgroundColor={colors.card}
@@ -127,21 +111,22 @@ const HomeScreen = ({ route }) => {
 export default HomeScreen;
 
 const styles = StyleSheet.create({
+  fill: { flex: 1 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   list: { paddingBottom: 24, flexGrow: 1 },
-  banner: { margin: 16, marginBottom: 20, padding: 20, borderRadius: 18 },
-  bannerDate: { color: 'rgba(255,255,255,0.85)', fontSize: 14, fontWeight: '600' },
-  bannerTitle: { color: '#FFFFFF', fontSize: 24, fontWeight: '800', marginTop: 4 },
+  banner: { marginHorizontal: 16, marginTop: 12, marginBottom: 14, paddingHorizontal: 16, paddingVertical: 12, borderRadius: 14 },
+  bannerRow: { flexDirection: 'row', alignItems: 'center' },
+  bannerTitle: { flex: 1, color: '#FFFFFF', fontSize: 18, fontWeight: '800' },
+  bannerSub: { color: 'rgba(255,255,255,0.8)', fontSize: 12, marginTop: 4 },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'flex-start',
-    marginTop: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
+    flexShrink: 1,
+    marginLeft: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
     backgroundColor: 'rgba(255,255,255,0.18)',
   },
-  chipText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700', marginLeft: 6 },
-  updated: { color: 'rgba(255,255,255,0.75)', fontSize: 12, marginTop: 12 },
+  chipText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700', marginLeft: 5, flexShrink: 1 },
 });

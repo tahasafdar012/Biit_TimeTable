@@ -5,13 +5,22 @@ import Ionicons from '@react-native-vector-icons/ionicons';
 import { useTheme } from '../theme/ThemeContext';
 
 // One timetable slot. Slots whose status isn't "class" (breaks, free periods) render muted.
-const ClassCard = ({ item }) => {
+// `current` gives the card a green border (the class happening right now).
+const ClassCard = ({ item, current = false }) => {
   const { colors } = useTheme();
   const isClass = !item.status || item.status === 'class';
+  const isFree = item.status === 'free';
   const teachers = (item.teachers ?? []).join(', ');
 
   return (
-    <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+    <View
+      style={[
+        styles.card,
+        { backgroundColor: colors.card, borderColor: colors.border },
+        isFree && styles.freeCard,
+        current && { borderColor: colors.primary, borderWidth: 2 },
+      ]}
+    >
       <View style={[styles.timeCol, { backgroundColor: isClass ? colors.primarySoft : colors.background }]}>
         <Text style={[styles.time, { color: isClass ? colors.primary : colors.textMuted }]}>{item.start}</Text>
         <View style={[styles.timeLine, { backgroundColor: isClass ? colors.primary : colors.border }]} />
@@ -22,6 +31,9 @@ const ClassCard = ({ item }) => {
         <Text style={[styles.subject, { color: isClass ? colors.text : colors.textMuted }]} numberOfLines={2}>
           {item.subject}
         </Text>
+        {isFree && (
+          <Text style={[styles.freeNote, { color: colors.textMuted }]}>No class in this period</Text>
+        )}
         {isClass && !!teachers && (
           <View style={styles.row}>
             <Ionicons name="person-outline" size={14} color={colors.textMuted} />
@@ -55,6 +67,8 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     shadowOffset: { width: 0, height: 2 },
   },
+  freeNote: { fontSize: 13, marginTop: 3 },
+  freeCard: { borderStyle: 'dashed', elevation: 0, shadowOpacity: 0 },
   timeCol: { width: 76, alignItems: 'center', justifyContent: 'center', paddingVertical: 14 },
   time: { fontSize: 14, fontWeight: '800' },
   timeLine: { width: 2, height: 12, borderRadius: 1, marginVertical: 4 },

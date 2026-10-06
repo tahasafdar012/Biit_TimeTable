@@ -1,5 +1,31 @@
+const crypto = require("crypto");
 const pdfService = require("../services/pdfService");
 const Timetable = require("../models/timetablemodel");
+
+// Ready-to-send JSON replies, built once per uploaded timetable and reused for every
+// student (hundreds may open the app at once). Keyed by the timetable object, so a new
+// upload starts a fresh cache automatically.
+const responseCache = new WeakMap();
+function cachedResponse(data, key, build) {
+  let byKey = responseCache.get(data);
+  if (!byKey) responseCache.set(data, (byKey = new Map()));
+  let reply = byKey.get(key);
+  if (!reply) {
+    const body = JSON.stringify(build());
+    const etag = `"${crypto.createHash("sha1").update(body).digest("base64")}"`;
+    reply = { body, etag };
+    byKey.set(key, reply);
+  }
+  return reply;
+}
+
+// Send a cached reply. If the app already has this exact version (If-None-Match matches
+// the ETag), Express answers "304 Not Modified" with no body — the app keeps its copy.
+function sendCached(req, res, { body, etag }) {
+  res.set("ETag", etag);
+  res.set("Cache-Control", "no-cache"); // clients may keep it, but must check before reusing
+  res.type("json").send(body);
+}
 
 // Resolve "today" to the actual weekday name, in the university's timezone —
 // not the server's, since Node/hosting can run in UTC or anywhere else.
@@ -11,6 +37,12 @@ function currentDayName() {
 function resolveDay(day) {
   if (!day) return day;
   return day.toLowerCase() === "today" ? currentDayName() : day;
+}
+
+// Version from the PDF's file name: "Timetable V#5.pdf", "TT v5.pdf", "Version 5" -> "V#5"
+function versionFromFileName(name) {
+  const m = name.match(/(?:version|v)\s*#?\s*(\d+(?:\.\d+)?)/i) || name.match(/#\s*(\d+(?:\.\d+)?)/);
+  return m ? `V#${m[1]}` : null;
 }
 
 exports.uploadTimetable = async (req, res) => {
@@ -25,9 +57,18 @@ exports.uploadTimetable = async (req, res) => {
       return res.status(422).json({ error: "No classes found in this PDF", warnings });
     }
 
-    const data = { updatedAt: new Date().toISOString(), sections, entries, warnings };
+    const fileName = req.file.originalname;
+    const version = versionFromFileName(fileName);
+    const data = { updatedAt: new Date().toISOString(), fileName, version, sections, entries, warnings };
     await Timetable.save(data);
-    res.json({ updatedAt: data.updatedAt, sections: sections.length, entries: entries.length, warnings });
+    res.json({
+      updatedAt: data.updatedAt,
+      fileName,
+      version,
+      sections: sections.length,
+      entries: entries.length,
+      warnings,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to parse timetable PDF" });
@@ -65,22 +106,32 @@ function getIndex(data) {
   return index;
 }
 
-// One section's week, day by day: its classes, plus "No Class" for empty slots after 5 pm
+// One section's week, day by day: its classes, "Free Slot" for empty slots before 5 pm,
+// and "No Class" for empty slots after 5 pm
 function buildWeek(data, section, day) {
   const { slots, byCell } = getIndex(data);
 
   const days = {};
   for (const d of DAYS) {
     if (day && d !== day) continue;
-    days[d] = slots.flatMap(({ start, end }) => {
+    let daySlots = slots.map(({ start, end }) => {
       const e = byCell.get(`${section}|${d}|${start}-${end}`);
-      if (e) return [{ start, end, status: "class", subject: e.subject, teachers: e.teachers, room: e.room }];
+      if (e) return { start, end, status: "class", subject: e.subject, teachers: e.teachers, room: e.room };
       return toMinutes(start) >= DAY_END
-        ? [{ start, end, status: "off", subject: "No Class", teachers: [], room: null }]
-        : [];
+        ? { start, end, status: "off", subject: "No Class", teachers: [], room: null }
+        : { start, end, status: "free", subject: "Free Slot", teachers: [], room: null };
     });
+    // A day with no classes at all isn't a list of free slots
+    if (!daySlots.some(s => s.status === "class")) daySlots = daySlots.filter(s => s.status !== "free");
+    days[d] = daySlots;
   }
-  return { updatedAt: data.updatedAt, section, days };
+  return {
+    updatedAt: data.updatedAt,
+    version: data.version ?? null,
+    fileName: data.fileName ?? null,
+    section,
+    days,
+  };
 }
 
 exports.getTimetable = async (req, res) => {
@@ -95,7 +146,8 @@ exports.getTimetable = async (req, res) => {
     if (view === "week") {
       if (!section) return res.status(400).json({ error: "view=week needs a section" });
       if (!data.sections.includes(section)) return res.status(404).json({ error: `Unknown section: ${section}` });
-      return res.json(buildWeek(data, section, day));  // unchanged, just now gets a resolved day
+      const reply = cachedResponse(data, `week|${section}|${day ?? ""}`, () => buildWeek(data, section, day));
+      return sendCached(req, res, reply);
     }
     if (section || day) {
       const entries = data.entries.filter(
@@ -112,5 +164,5 @@ exports.getTimetable = async (req, res) => {
 exports.getSections = async (req, res) => {
   const data = await Timetable.get();
   if (!data) return res.status(404).json({ error: "No timetable uploaded yet" });
-  res.json({ sections: data.sections });
+  sendCached(req, res, cachedResponse(data, "sections", () => ({ sections: data.sections })));
 };

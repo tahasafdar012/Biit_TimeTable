@@ -12,7 +12,8 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Ionicons from '@react-native-vector-icons/ionicons';
 
-import { downloadWeek, getSections } from './services/api';
+import { fetchSections, errorMessage } from './services/api';
+import { downloadTimetable } from './timetable/TimetableContext';
 import { saveSection } from './storage/sectionStorage';
 import { useTheme } from './theme/ThemeContext';
 import StateMessage from './components/StateMessage';
@@ -33,9 +34,9 @@ const SelectSectionScreen = ({ navigation }) => {
   const load = useCallback(() => {
     setLoading(true);
     setError(null);
-    getSections()
-      .then(list => setSections(list ?? []))
-      .catch(err => setError(err.response?.data?.error || err.message))
+    fetchSections()
+      .then(setSections)
+      .catch(err => setError(errorMessage(err)))
       .finally(() => setLoading(false));
   }, []);
 
@@ -52,13 +53,11 @@ const SelectSectionScreen = ({ navigation }) => {
     setSaveError(null);
     try {
       // Download the timetable now so the app works offline from the first launch
-      await downloadWeek(selected);
+      await downloadTimetable(selected);
       await saveSection(selected);
       navigation.reset({ index: 0, routes: [{ name: 'MainTabs', params: { section: selected } }] });
     } catch (err) {
-      setSaveError(
-        err.response?.data?.error || "Couldn't download the timetable. Check your internet and try again.",
-      );
+      setSaveError(errorMessage(err));
       setSaving(false);
     }
   };

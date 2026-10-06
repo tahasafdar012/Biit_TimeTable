@@ -1,17 +1,69 @@
-import { StyleSheet, Text, View, Image, Switch, Pressable, ScrollView, Alert } from 'react-native';
-import React from 'react';
+import { StyleSheet, Text, View, Image, Switch, Pressable, ScrollView, Alert, Linking } from 'react-native';
+import React, { useCallback, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import Ionicons from '@react-native-vector-icons/ionicons';
 
 import { useTheme } from './theme/ThemeContext';
 import { clearSection } from './storage/sectionStorage';
 import { clearCachedWeek } from './storage/timetableCache';
+import { getAlertPrefs, saveAlertPrefs } from './storage/alertPrefs';
+import {
+  alertsSupported,
+  canScheduleExactAlarms,
+  clearClassAlerts,
+  openExactAlarmSettings,
+  requestNotificationPermission,
+  syncClassAlerts,
+} from './services/classAlerts';
+import { useTimetable } from './timetable/TimetableContext';
+import { formatUpdatedAt } from './utils/time';
 
 const logo = require('./assets/logo.png');
 const APP_VERSION = require('../package.json').version;
 
-const SettingScreen = ({ navigation, route }) => {
-  const { section } = route.params ?? {};
+// Without the "Alarms & reminders" permission Android may fire alerts a few minutes late
+async function askForExactAlarms() {
+  if (await canScheduleExactAlarms()) return;
+  Alert.alert(
+    'Allow on-time alerts',
+    'To switch exactly when a class starts and ends, allow "Alarms & reminders" for BIIT TimeTable.',
+    [
+      { text: 'Not now', style: 'cancel' },
+      { text: 'Allow', onPress: openExactAlarmSettings },
+    ],
+  );
+}
+
+const SettingScreen = ({ navigation }) => {
   const { colors, isDark, setDarkMode } = useTheme();
+  const { section, week: timetable } = useTimetable(); // saved copy: version, file name, updatedAt
+  const [prefs, setPrefs] = useState({ reminders: false, vibrate: false });
+
+  // reload on every visit in case alert permissions/settings changed outside the app
+  useFocusEffect(
+    useCallback(() => {
+      getAlertPrefs().then(setPrefs);
+    }, []),
+  );
+
+  const updatePref = async (name, value) => {
+    if (value && name === 'reminders' && !(await requestNotificationPermission())) {
+      Alert.alert(
+        'Notifications are off',
+        'Allow notifications for BIIT TimeTable in your phone settings to get class reminders.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Open settings', onPress: () => Linking.openSettings() },
+        ],
+      );
+      return;
+    }
+    const next = { ...prefs, [name]: value };
+    setPrefs(next);
+    await saveAlertPrefs(next);
+    await syncClassAlerts(timetable).catch(() => {});
+    if (value) askForExactAlarms();
+  };
 
   const resetSection = () => {
     Alert.alert(
@@ -25,6 +77,7 @@ const SettingScreen = ({ navigation, route }) => {
           onPress: async () => {
             await clearSection();
             if (section) await clearCachedWeek(section); // reset = start fresh, needs internet again
+            await clearClassAlerts().catch(() => {}); // old section's reminders; new ones come with the new section
             // Settings lives inside the tab navigator; reset the root stack above it.
             (navigation.getParent() ?? navigation).reset({
               index: 0,
@@ -99,6 +152,71 @@ const SettingScreen = ({ navigation, route }) => {
         </Pressable>
       </View>
 
+      <Text style={[styles.groupTitle, { color: colors.textMuted }]}>TIMETABLE</Text>
+      <View style={card}>
+        <View style={styles.row}>
+          <View style={[styles.rowIcon, { backgroundColor: colors.primarySoft }]}>
+            <Ionicons name="document-text-outline" size={18} color={colors.primary} />
+          </View>
+          <View style={styles.flex}>
+            <Text style={[styles.rowTitle, { color: colors.text }]}>Current Timetable Version</Text>
+            {/* the version comes from the PDF's file name; show the name when it has none */}
+            <Text style={[styles.rowSub, { color: colors.textMuted }]} numberOfLines={1}>
+              {(!timetable?.version && timetable?.fileName) ||
+                (formatUpdatedAt(timetable?.updatedAt)
+                  ? `Updated ${formatUpdatedAt(timetable.updatedAt)}`
+                  : 'Not downloaded yet')}
+            </Text>
+          </View>
+          <View style={[styles.badge, { backgroundColor: colors.primarySoft, borderColor: colors.primary }]}>
+            <Text style={[styles.badgeText, { color: colors.primary }]}>{timetable?.version ?? '—'}</Text>
+          </View>
+        </View>
+      </View>
+
+      {alertsSupported && (
+        <>
+          <Text style={[styles.groupTitle, { color: colors.textMuted }]}>NOTIFICATIONS</Text>
+          <View style={card}>
+            <View style={styles.row}>
+              <View style={[styles.rowIcon, { backgroundColor: colors.primarySoft }]}>
+                <Ionicons name="notifications-outline" size={18} color={colors.primary} />
+              </View>
+              <View style={styles.flex}>
+                <Text style={[styles.rowTitle, { color: colors.text }]}>Class Reminders</Text>
+                <Text style={[styles.rowSub, { color: colors.textMuted }]}>
+                  Alert 10 minutes before each class starts
+                </Text>
+              </View>
+              <Switch
+                value={prefs.reminders}
+                onValueChange={v => updatePref('reminders', v)}
+                trackColor={{ false: colors.border, true: colors.buttonBg }}
+                thumbColor="#FFFFFF"
+              />
+            </View>
+            <View style={[styles.divider, { backgroundColor: colors.border }]} />
+            <View style={styles.row}>
+              <View style={[styles.rowIcon, { backgroundColor: colors.primarySoft }]}>
+                <Ionicons name="phone-portrait-outline" size={18} color={colors.primary} />
+              </View>
+              <View style={styles.flex}>
+                <Text style={[styles.rowTitle, { color: colors.text }]}>Vibrate During Class</Text>
+                <Text style={[styles.rowSub, { color: colors.textMuted }]}>
+                  Switch to vibrate when a class starts, ring again when it ends
+                </Text>
+              </View>
+              <Switch
+                value={prefs.vibrate}
+                onValueChange={v => updatePref('vibrate', v)}
+                trackColor={{ false: colors.border, true: colors.buttonBg }}
+                thumbColor="#FFFFFF"
+              />
+            </View>
+          </View>
+        </>
+      )}
+
       <Text style={[styles.footer, { color: colors.textMuted }]}>
         Barani Institute of Information Technology{'\n'}Version {APP_VERSION}
       </Text>
@@ -110,6 +228,9 @@ export default SettingScreen;
 
 const styles = StyleSheet.create({
   content: { padding: 16, paddingBottom: 32 },
+  flex: { flex: 1, marginRight: 8 },
+  badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, borderWidth: 1 },
+  badgeText: { fontSize: 13, fontWeight: '800' },
   card: { borderRadius: 16, borderWidth: 1, overflow: 'hidden' },
   profile: { flexDirection: 'row', alignItems: 'center', padding: 16 },
   logoRing: {

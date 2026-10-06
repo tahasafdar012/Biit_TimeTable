@@ -1,0 +1,22 @@
+# Render Blueprint for the BIIT TimeTable API (server/ folder).
+# Render dashboard -> New -> Blueprint -> pick this repo; it reads this file.
+services:
+  - type: web
+    name: biit-timetable-api
+    runtime: node
+    rootDir: server
+    plan: starter # persistent disks need a paid plan
+    buildCommand: yarn install --frozen-lockfile --production
+    startCommand: yarn start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATA_DIR # uploaded timetable + changed admin password live on the disk
+        value: /var/data
+      - key: ADMIN_PASSWORD # Render asks for this value when you create the service
+        sync: false
+    disk:
+      name: biit-data
+      mountPath: /var/data
+      sizeGB: 1
